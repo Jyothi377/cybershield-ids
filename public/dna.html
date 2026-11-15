@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DNA Motif Search - CyberShield IDS</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header>
+  <a class="brand" href="index.html">CyberShield IDS</a>
+  <nav>
+    <a href="index.html">Home</a>
+    <a href="scanner.html">Signature Scanner</a>
+    <a href="dna.html" class="active">DNA Motif Search</a>
+    <a href="bandwidth.html">Bandwidth Optimizer</a>
+    <a href="balancer.html">Server Load Balancer</a>
+    <a href="compare.html">Algorithm Comparison</a>
+    <a href="history.html">History</a>
+  </nav>
+</header>
+<main>
+  <h2>DNA Motif Search</h2>
+  <p class="how">How it works: the server tries the motif at every position in the sequence and compares it character by character (naive matching). Every search is saved to History.</p>
+
+  <div class="panel">
+    <label>DNA sequence (A, C, G, T only)</label>
+    <textarea id="dnaSeq">AGCTTAGCTAGCTTAGCAGC</textarea>
+    <div class="row" style="margin-top:12px">
+      <div><label>Motif</label><input id="motifIn" value="AGC"></div>
+      <button class="go" onclick="runDNA()">Search Motif</button>
+    </div>
+  </div>
+
+  <div class="panel" id="dnaOut"></div>
+</main>
+
+<script src="assets/app.js"></script>
+<script>
+addUploadButton("dnaSeq", ".txt,.fa,.fasta,.pdf,.png,.jpg,.jpeg", "Upload a FASTA or text file, PDF, or photo of a sequence",
+  text => text.split("\n").filter(line => !line.startsWith(">")).join("\n"));
+
+async function runDNA() {
+  const out = document.getElementById("dnaOut");
+  try {
+    const r = await api("POST", "/api/dna", {
+      sequence: document.getElementById("dnaSeq").value,
+      motif: document.getElementById("motifIn").value
+    });
+    const flags = new Array(r.sequence.length).fill(false);
+    r.positions.forEach(p => { for (let k = p; k < p + r.motif.length; k++) flags[k] = true; });
+    const highlighted = [...r.sequence].map((c, i) => flags[i] ? `<mark>${c}</mark>` : c).join("");
+
+    out.innerHTML = `
+      <div class="cards">
+        <div class="card"><b>${r.positions.length}</b><span>Matches found</span></div>
+        <div class="card"><b>${r.comparisons}</b><span>Character comparisons</span></div>
+      </div>
+      <p><b>Start positions (0-based):</b> ${r.positions.length ? r.positions.join(", ") : "none"}</p>
+      <p class="mono">${highlighted}</p>`;
+  } catch (e) {
+    showError(out, e.message);
+  }
+}
+
+</script>
+</body>
+</html>

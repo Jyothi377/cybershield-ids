@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Algorithm Comparison - CyberShield IDS</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header>
+  <a class="brand" href="index.html">CyberShield IDS</a>
+  <nav>
+    <a href="index.html">Home</a>
+    <a href="scanner.html">Signature Scanner</a>
+    <a href="dna.html">DNA Motif Search</a>
+    <a href="bandwidth.html">Bandwidth Optimizer</a>
+    <a href="balancer.html">Server Load Balancer</a>
+    <a href="compare.html" class="active">Algorithm Comparison</a>
+    <a href="history.html">History</a>
+  </nav>
+</header>
+<main>
+  <h2>Algorithm Comparison</h2>
+  <p class="how">How it works: the server runs Naive, KMP and Rabin-Karp on the same input. Time is the average of 200 runs. Every comparison is saved to History.</p>
+
+  <div class="panel">
+    <label>Input text</label>
+    <textarea id="cmpText"></textarea>
+    <div class="row" style="margin-top:12px">
+      <div><label>Pattern</label><input id="cmpPat" value="union select"></div>
+      <button class="go" onclick="runCmp()">Run Comparison</button>
+    </div>
+  </div>
+
+  <div class="panel" style="overflow-x:auto">
+    <table>
+      <thead><tr><th>Algorithm</th><th>Comparisons</th><th>Time (ms)</th><th>Matches found</th></tr></thead>
+      <tbody id="cmpOut"><tr><td colspan="4">Click Run Comparison.</td></tr></tbody>
+    </table>
+  </div>
+</main>
+
+<script src="assets/app.js"></script>
+<script>
+const SAMPLE_TEXT = [
+  "GET /login?id=1' OR '1'='1",
+  "GET /search?q=<script>alert(1)<\/script>",
+  "GET /files?path=../../../etc/passwd",
+  "POST /cart?item=UNION SELECT password FROM users",
+  "GET /products"
+].join("\n");
+
+async function runCmp() {
+  const out = document.getElementById("cmpOut");
+  try {
+    const r = await api("POST", "/api/compare", {
+      text: document.getElementById("cmpText").value,
+      pattern: document.getElementById("cmpPat").value
+    });
+    out.innerHTML = r.rows.map(x => `<tr><td>${esc(x.algorithm)}</td><td>${x.comparisons}</td><td>${x.timeMs.toFixed(4)}</td><td>${x.matches}</td></tr>`).join("");
+  } catch (e) {
+    out.innerHTML = `<tr><td colspan="4" class="msg">${esc(e.message)}</td></tr>`;
+  }
+}
+
+document.getElementById("cmpText").value = SAMPLE_TEXT;
+addUploadButton("cmpText", ".txt,.log,.csv,.pdf,.png,.jpg,.jpeg,.webp,.bmp", "Upload any text file, PDF, or photo");
+</script>
+</body>
+</html>

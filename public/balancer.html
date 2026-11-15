@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Server Load Balancer - CyberShield IDS</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header>
+  <a class="brand" href="index.html">CyberShield IDS</a>
+  <nav>
+    <a href="index.html">Home</a>
+    <a href="scanner.html">Signature Scanner</a>
+    <a href="dna.html">DNA Motif Search</a>
+    <a href="bandwidth.html">Bandwidth Optimizer</a>
+    <a href="balancer.html" class="active">Server Load Balancer</a>
+    <a href="compare.html">Algorithm Comparison</a>
+    <a href="history.html">History</a>
+  </nav>
+</header>
+<main>
+  <h2>Server Load Balancer</h2>
+  <p class="how">How it works: the server sends each stream to the least-loaded server that still has room for it. Largest streams are placed first. Every run is saved to History.</p>
+
+  <div class="panel">
+    <div class="row">
+      <div><label>Number of servers</label><input id="srvCount" type="number" value="3" min="1"></div>
+      <div><label>Capacity per server (Mbps)</label><input id="srvCap" type="number" value="1000" min="1"></div>
+    </div>
+    <label>Stream loads in Mbps, comma-separated</label>
+    <textarea id="loadsIn" style="min-height:60px">450, 300, 200, 650, 150, 400, 900</textarea>
+    <div class="row" style="margin-top:12px"><button class="go" onclick="runLB()">Balance Load</button></div>
+  </div>
+
+  <div id="lbMsg"></div>
+  <div class="cards">
+    <div class="card"><b id="lbTotal">0</b><span>Total load (Mbps)</span></div>
+    <div class="card"><b id="lbAvg">0%</b><span>Average utilization</span></div>
+    <div class="card"><b id="lbImb">0%</b><span>Imbalance (max minus min)</span></div>
+  </div>
+
+  <div class="grid">
+    <div class="panel" style="overflow-x:auto">
+      <table>
+        <thead><tr><th>Stream</th><th>Load (Mbps)</th><th>Assigned server</th></tr></thead>
+        <tbody id="lbOut"></tbody>
+      </table>
+    </div>
+    <div class="panel" id="lbBars"></div>
+  </div>
+</main>
+
+<script src="assets/app.js"></script>
+<script>
+addUploadButton("loadsIn", ".txt,.csv,.pdf,.png,.jpg,.jpeg", "Upload a list of stream loads (numbers in Mbps)");
+
+async function runLB() {
+  const msg = document.getElementById("lbMsg");
+  const out = document.getElementById("lbOut");
+  const loads = document.getElementById("loadsIn").value.split(/[,\n]+/).map(x => Number(x.trim())).filter(x => x > 0);
+  try {
+    const r = await api("POST", "/api/balance", {
+      servers: document.getElementById("srvCount").value,
+      capacity: document.getElementById("srvCap").value,
+      loads
+    });
+    msg.innerHTML = "";
+    document.getElementById("lbTotal").textContent = r.total;
+    document.getElementById("lbAvg").textContent = r.averageUtilization.toFixed(1) + "%";
+    document.getElementById("lbImb").textContent = r.imbalance.toFixed(1) + "%";
+
+    out.innerHTML = r.assignments.map(a => `
+      <tr class="${a.server === null ? "unassigned" : ""}"><td>S${a.stream}</td><td>${a.load}</td>
+      <td>${a.server === null ? "Unassigned (no server has room)" : "Server " + a.server}</td></tr>`).join("");
+
+    const cap = Number(document.getElementById("srvCap").value);
+    document.getElementById("lbBars").innerHTML = `<h3 style="margin-top:0">Server utilization</h3>` + r.servers.map(s => `
+      <div style="margin-bottom:12px"><div>Server ${s.id}: ${s.used} / ${cap} Mbps (${s.utilization.toFixed(1)}%)</div>
+      <div class="bar"><i class="${s.utilization >= 90 ? "hot" : ""}" style="width:${Math.min(100, s.utilization)}%"></i></div></div>`).join("");
+  } catch (e) {
+    msg.innerHTML = `<div class="msg">${esc(e.message)}</div>`;
+  }
+}
+</script>
+</body>
+</html>

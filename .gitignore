@@ -1,0 +1,7 @@
+node_modules/
+.vercel/
+cybershield.db
+cybershield.db-shm
+cybershield.db-wal
+.env
+.env.*

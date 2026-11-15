@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bandwidth Optimizer - CyberShield IDS</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header>
+  <a class="brand" href="index.html">CyberShield IDS</a>
+  <nav>
+    <a href="index.html">Home</a>
+    <a href="scanner.html">Signature Scanner</a>
+    <a href="dna.html">DNA Motif Search</a>
+    <a href="bandwidth.html" class="active">Bandwidth Optimizer</a>
+    <a href="balancer.html">Server Load Balancer</a>
+    <a href="compare.html">Algorithm Comparison</a>
+    <a href="history.html">History</a>
+  </nav>
+</header>
+<main>
+  <h2>Bandwidth Optimizer</h2>
+  <p class="how">How it works: the server finds paths with spare capacity from the source to the client and sends as much data as the links allow (Edmonds-Karp max flow). Every run is saved to History.</p>
+
+  <div class="grid">
+    <div class="panel" style="overflow-x:auto">
+      <h3 style="margin-top:0">Links (capacity in Mbps)</h3>
+      <table>
+        <thead><tr><th>From</th><th>To</th><th>Capacity</th><th></th></tr></thead>
+        <tbody id="linkTable"></tbody>
+      </table>
+      <div style="margin-top:12px"><button class="small" onclick="addLink()">+ Add link</button>
+        <label class="small" style="padding:6px 10px;cursor:pointer;margin-left:8px">Upload CSV
+          <input type="file" accept=".csv,.txt,.graphml" style="display:none" onchange="uploadLinks(this)">
+        </label>
+        <span class="how" id="csvStatus" style="margin:0 0 0 8px"></span>
+        <div class="how" style="margin-top:6px">Upload a .graphml network (Topology Zoo) or a CSV with one link per line: from,to,capacity</div>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <div><label>Source</label><select id="srcSel" onchange="renderLinks()"></select></div>
+        <div><label>Client (sink)</label><select id="snkSel"></select></div>
+        <button class="go" onclick="computeFlow()">Compute Max Flow</button>
+      </div>
+    </div>
+    <div class="panel">
+      <h3 style="margin-top:0">Result</h3>
+      <div id="flowOut"><span style="color:var(--muted)">Click Compute Max Flow.</span></div>
+    </div>
+  </div>
+
+  <div class="panel" id="flowSvgBox"></div>
+</main>
+
+<script src="assets/app.js"></script>
+<script>
+let links = [
+  { from: "Source", to: "Cloud-A", cap: 10 },
+  { from: "Source", to: "Cloud-B", cap: 8 },
+  { from: "Cloud-A", to: "Edge-1", cap: 6 },
+  { from: "Cloud-A", to: "Edge-2", cap: 4 },
+  { from: "Cloud-B", to: "Edge-2", cap: 5 },
+  { from: "Cloud-B", to: "Edge-1", cap: 3 },
+  { from: "Edge-1", to: "Client", cap: 9 },
+  { from: "Edge-2", to: "Client", cap: 7 }
+];
+
+function nodeNames() {
+  const set = new Set();
+  links.forEach(l => { if (l.from) set.add(l.from); if (l.to) set.add(l.to); });
+  return [...set];
+}
+
+function renderLinks() {
+  document.getElementById("linkTable").innerHTML = links.map((l, i) => `
+    <tr>
+      <td><input value="${esc(l.from)}" oninput="links[${i}].from=this.value;refreshNodes()"></td>
+      <td><input value="${esc(l.to)}" oninput="links[${i}].to=this.value;refreshNodes()"></td>
+      <td><input type="number" min="0" value="${l.cap}" oninput="links[${i}].cap=Number(this.value)"></td>
+      <td><button class="small" onclick="removeLink(${i})">X</button></td>
+    </tr>`).join("");
+  refreshNodes();
+}
+
+function refreshNodes() {
+  const src = document.getElementById("srcSel");
+  const snk = document.getElementById("snkSel");
+  const names = nodeNames();
+  const s = src.value, t = snk.value;
+  const opts = names.map(n => `<option>${esc(n)}</option>`).join("");
+  src.innerHTML = opts;
+  snk.innerHTML = opts;
+  src.value = names.includes(s) ? s : (names.includes("Source") ? "Source" : names[0]);
+  snk.value = names.includes(t) ? t : (names.includes("Client") ? "Client" : names[names.length - 1]);
+}
+
+// Reads GraphML (Topology Zoo format) in the browser and returns links.
+// Each network link becomes two directed links, so flow can go both ways.
+// Capacity comes from LinkSpeed and LinkSpeedUnits; if missing, 1000 Mbps is used.
+function parseGraphML(xml) {
+  const doc = new DOMParser().parseFromString(xml, "text/xml");
+  const keyIds = {};
+  doc.querySelectorAll("key").forEach(k => { keyIds[k.getAttribute("attr.name")] = k.getAttribute("id"); });
+  const dataOf = (el, name) => {
+    const id = keyIds[name];
+    if (!id) return null;
+    const d = [...el.querySelectorAll("data")].find(x => x.getAttribute("key") === id);
+    return d ? d.textContent.trim() : null;
+  };
+  const unitToMbps = { G: 1000, M: 1, K: 0.001, Gbps: 1000, Mbps: 1, Kbps: 0.001 };
+
+  const label = {};
+  doc.querySelectorAll("node").forEach(n => {
+    label[n.getAttribute("id")] = dataOf(n, "label") || n.getAttribute("id");
+  });
+
+  const out = [];
+  doc.querySelectorAll("edge").forEach(e => {
+    const from = label[e.getAttribute("source")];
+    const to = label[e.getAttribute("target")];
+    const speed = parseFloat(dataOf(e, "LinkSpeed"));
+    const factor = unitToMbps[dataOf(e, "LinkSpeedUnits")];
+    const cap = !isNaN(speed) && factor ? Math.round(speed * factor) : 1000;
+    if (from && to && from !== to) {
+      out.push({ from, to, cap });
+      out.push({ from: to, to: from, cap });
+    }
+  });
+  return out;
+}
+
+async function uploadLinks(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const status = document.getElementById("csvStatus");
+  let parsed = [];
+  try {
+    const text = await file.text();
+    if (file.name.toLowerCase().endsWith(".graphml")) {
+      parsed = parseGraphML(text);
+    } else {
+      text.split(/\r?\n/).map(l => l.trim()).filter(Boolean).forEach(line => {
+        const [from, to, cap] = line.split(",").map(x => x.trim());
+        if (from && to && !isNaN(Number(cap))) parsed.push({ from, to, cap: Number(cap) });
+      });
+    }
+  } catch (e) {
+    parsed = [];
+  }
+  if (parsed.length === 0) {
+    status.textContent = "No valid links found. Use a .graphml file or lines like: from,to,capacity";
+  } else {
+    links = parsed;
+    renderLinks();
+    status.textContent = `Loaded ${parsed.length} directed link(s) from ${file.name}. Pick a source and client, then compute.`;
+  }
+  input.value = "";
+}
+
+function addLink() { links.push({ from: "", to: "", cap: 1 }); renderLinks(); }
+function removeLink(i) { links.splice(i, 1); renderLinks(); }
+
+async function computeFlow() {
+  const out = document.getElementById("flowOut");
+  const source = document.getElementById("srcSel").value;
+  const sink = document.getElementById("snkSel").value;
+  try {
+    const r = await api("POST", "/api/flow", { links, source, sink });
+    out.innerHTML = `
+      <div class="cards"><div class="card"><b>${r.value}</b><span>Maximum flow (Mbps)</span></div></div>
+      <p><b>Augmenting paths found:</b></p>
+      ${r.paths.length ? r.paths.map(p => `<div class="mono" style="margin-bottom:6px">${esc(p.route)} <span style="color:var(--muted)">(bottleneck ${p.bottleneck} Mbps)</span></div>`).join("") : "<div>No path from source to client.</div>"}
+      <table style="margin-top:12px"><thead><tr><th>Link</th><th>Flow / Capacity</th></tr></thead>
+      <tbody>${r.edges.map(e => `<tr><td>${esc(e.from)} to ${esc(e.to)}</td><td>${e.flow} / ${e.cap}</td></tr>`).join("")}</tbody></table>`;
+    drawFlow(r, source);
+  } catch (e) {
+    showError(out, e.message);
+  }
+}
+
+function drawFlow(r, sName) {
+  const box = document.getElementById("flowSvgBox");
+  const W = 760, H = 320;
+  const names = r.names;
+  const idx = {};
+  names.forEach((n, i) => idx[n] = i);
+  const N = names.length;
+  const s = idx[sName];
+
+  // Columns by distance from the source, so the graph reads left to right
+  const dist = new Array(N).fill(-1);
+  dist[s] = 0;
+  const q = [s];
+  while (q.length) {
+    const u = q.shift();
+    r.edges.forEach(e => {
+      const a = idx[e.from], b = idx[e.to];
+      if (a === u && dist[b] === -1) { dist[b] = dist[u] + 1; q.push(b); }
+    });
+  }
+  const maxD = Math.max(0, ...dist);
+  dist.forEach((d, i) => { if (d === -1) dist[i] = maxD + 1; });
+  const layers = {};
+  dist.forEach((d, i) => { (layers[d] = layers[d] || []).push(i); });
+  const maxLayer = Math.max(...Object.keys(layers).map(Number));
+
+  const pos = [];
+  Object.keys(layers).forEach(d => {
+    const group = layers[d];
+    group.forEach((node, k) => {
+      const x = 60 + (Number(d) * (W - 120)) / (maxLayer || 1);
+      const y = group.length === 1 ? H / 2 : 40 + (k * (H - 80)) / (group.length - 1);
+      pos[node] = { x, y };
+    });
+  });
+
+  const edgeSvg = r.edges.map(e => {
+    const a = pos[idx[e.from]], b = pos[idx[e.to]];
+    const color = e.cap > 0 && e.flow >= e.cap ? "var(--red)" : e.flow > 0 ? "var(--green)" : "var(--muted)";
+    return `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="${color}" stroke-width="2.5" marker-end="url(#arr)"/>
+      <text x="${(a.x + b.x) / 2}" y="${(a.y + b.y) / 2 - 6}" text-anchor="middle">${e.flow}/${e.cap}</text>`;
+  }).join("");
+
+  const nodeSvg = names.map((n, i) => `
+    <circle cx="${pos[i].x}" cy="${pos[i].y}" r="24" fill="#0b1222" stroke="var(--accent)" stroke-width="1.5"/>
+    <text x="${pos[i].x}" y="${pos[i].y + 4}" text-anchor="middle">${esc(n)}</text>`).join("");
+
+  box.innerHTML = `<h3 style="margin-top:0">Flow diagram (red = saturated link, green = carrying flow)</h3>
+    <svg viewBox="0 0 ${W} ${H}" width="100%" style="background:#0b1222;border-radius:8px">
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="28" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#8a98b3"/></marker></defs>
+      ${edgeSvg}${nodeSvg}
+    </svg>`;
+}
+
+renderLinks();
+</script>
+</body>
+</html>

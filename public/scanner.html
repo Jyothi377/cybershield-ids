@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signature Scanner - CyberShield IDS</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header>
+  <a class="brand" href="index.html">CyberShield IDS</a>
+  <nav>
+    <a href="index.html">Home</a>
+    <a href="scanner.html" class="active">Signature Scanner</a>
+    <a href="dna.html">DNA Motif Search</a>
+    <a href="bandwidth.html">Bandwidth Optimizer</a>
+    <a href="balancer.html">Server Load Balancer</a>
+    <a href="compare.html">Algorithm Comparison</a>
+    <a href="history.html">History</a>
+  </nav>
+</header>
+<main>
+  <h2>Signature Scanner</h2>
+  <p class="how">How it works: the server checks each log line against the signature database. Short signatures use KMP, long ones use Rabin-Karp. Every scan is saved to History.</p>
+
+  <div class="panel">
+    <label>Paste network log (one request per line)</label>
+    <textarea id="logInput"></textarea>
+    <div class="row" style="margin-top:12px"><button class="go" onclick="scanLog()">Scan Log</button></div>
+  </div>
+
+  <div class="cards">
+    <div class="card"><b id="cTotal">0</b><span>Total lines scanned</span></div>
+    <div class="card"><b id="cThreats">0</b><span>Threat lines</span></div>
+    <div class="card"><b id="cSafe">0</b><span>Safe lines</span></div>
+  </div>
+
+  <div class="grid">
+    <div class="panel" style="overflow-x:auto">
+      <h3 style="margin-top:0">Results</h3>
+      <table>
+        <thead><tr><th>Line</th><th>Log line</th><th>Attack type</th><th>Matched signature</th><th>Algorithm</th><th>Severity</th></tr></thead>
+        <tbody id="scanOut"><tr><td colspan="6">Click Scan Log to check the log.</td></tr></tbody>
+      </table>
+    </div>
+    <div class="panel">
+      <h3 style="margin-top:0">Signature database</h3>
+      <div class="row">
+        <div><input id="newSig" placeholder="e.g. onerror="></div>
+        <button class="small" onclick="addSig()">Add</button>
+      </div>
+      <div id="sigMsg"></div>
+      <table>
+        <thead><tr><th>Signature</th><th>Type</th><th>Severity</th><th></th></tr></thead>
+        <tbody id="sigList"></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<script src="assets/app.js"></script>
+<script>
+const SAMPLE_LOG = [
+  "GET /login?id=1' OR '1'='1",
+  "GET /search?q=<script>alert(1)<\/script>",
+  "GET /files?path=../../../etc/passwd",
+  "POST /cart?item=UNION SELECT password FROM users",
+  "GET /products"
+].join("\n");
+
+async function loadSignatures() {
+  const list = await api("GET", "/api/signatures");
+  document.getElementById("sigList").innerHTML = list.map(s =>
+    `<tr><td class="mono">${esc(s.sig)}</td><td>${esc(s.type)}</td><td class="sev-${esc(s.sev)}">${esc(s.sev)}</td>
+     <td><button class="small" onclick="deleteSig(${s.id})">Delete</button></td></tr>`
+  ).join("");
+}
+
+async function addSig() {
+  const input = document.getElementById("newSig");
+  const msg = document.getElementById("sigMsg");
+  try {
+    await api("POST", "/api/signatures", { sig: input.value });
+    input.value = "";
+    msg.innerHTML = "";
+    await loadSignatures();
+  } catch (e) {
+    showError(msg, e.message);
+  }
+}
+
+async function deleteSig(id) {
+  await api("DELETE", `/api/signatures/${id}`);
+  await loadSignatures();
+}
+
+async function scanLog() {
+  const log = document.getElementById("logInput").value;
+  const out = document.getElementById("scanOut");
+  try {
+    const r = await api("POST", "/api/scan", { log });
+    document.getElementById("cTotal").textContent = r.total;
+    document.getElementById("cThreats").textContent = r.threatLines;
+    document.getElementById("cSafe").textContent = r.safe;
+    out.innerHTML = r.rows.length
+      ? r.rows.map(x => `<tr><td>${x.line}</td><td class="mono">${esc(x.log)}</td><td>${esc(x.type)}</td><td class="mono">${esc(x.sig)}</td><td>${x.algorithm}</td><td class="sev-${esc(x.severity)}">${esc(x.severity)}</td></tr>`).join("")
+      : `<tr><td colspan="6">No threats found.</td></tr>`;
+  } catch (e) {
+    out.innerHTML = `<tr><td colspan="6" class="msg">${esc(e.message)}</td></tr>`;
+  }
+}
+
+document.getElementById("logInput").value = SAMPLE_LOG;
+addUploadButton("logInput", ".txt,.log,.csv,.pdf,.png,.jpg,.jpeg,.webp,.bmp", "Upload a log file, report, PDF, or a photo of a log");
+loadSignatures();
+</script>
+</body>
+</html>

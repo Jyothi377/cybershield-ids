@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>History - CyberShield IDS</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header>
+  <a class="brand" href="index.html">CyberShield IDS</a>
+  <nav>
+    <a href="index.html">Home</a>
+    <a href="scanner.html">Signature Scanner</a>
+    <a href="dna.html">DNA Motif Search</a>
+    <a href="bandwidth.html">Bandwidth Optimizer</a>
+    <a href="balancer.html">Server Load Balancer</a>
+    <a href="compare.html">Algorithm Comparison</a>
+    <a href="history.html" class="active">History</a>
+  </nav>
+</header>
+<main>
+  <h2>History</h2>
+  <p class="how">Every run saved by the backend in the SQLite database. Click View to see the saved input and result.</p>
+
+  <div class="panel">
+    <div class="row">
+      <div>
+        <label>Filter by page</label>
+        <select id="kindSel" onchange="loadRuns()">
+          <option value="">All</option>
+          <option value="scan">Signature Scanner</option>
+          <option value="dna">DNA Motif Search</option>
+          <option value="flow">Bandwidth Optimizer</option>
+          <option value="balance">Server Load Balancer</option>
+          <option value="compare">Algorithm Comparison</option>
+        </select>
+      </div>
+      <button class="small" onclick="loadRuns()">Refresh</button>
+      <button class="small" onclick="clearAll()">Clear all history</button>
+    </div>
+    <table>
+      <thead><tr><th>#</th><th>Time</th><th>Page</th><th>Summary</th><th></th></tr></thead>
+      <tbody id="runsOut"></tbody>
+    </table>
+  </div>
+
+  <div class="panel" id="detail" style="display:none">
+    <h3 style="margin-top:0" id="detailTitle"></h3>
+    <pre id="detailBody" class="mono" style="white-space:pre-wrap;color:var(--muted)"></pre>
+  </div>
+</main>
+
+<script src="assets/app.js"></script>
+<script>
+const LABELS = { scan: "Signature Scanner", dna: "DNA Motif Search", flow: "Bandwidth Optimizer", balance: "Server Load Balancer", compare: "Algorithm Comparison" };
+
+async function loadRuns() {
+  const kind = document.getElementById("kindSel").value;
+  const out = document.getElementById("runsOut");
+  try {
+    const runs = await api("GET", kind ? `/api/runs?kind=${kind}` : "/api/runs");
+    out.innerHTML = runs.length
+      ? runs.map(r => `<tr><td>${r.id}</td><td>${esc(r.created_at)}</td><td>${esc(LABELS[r.kind] || r.kind)}</td><td>${esc(r.summary)}</td>
+          <td><button class="small" onclick="viewRun(${r.id})">View</button></td></tr>`).join("")
+      : `<tr><td colspan="5">No saved runs yet. Use a page first.</td></tr>`;
+  } catch (e) {
+    out.innerHTML = `<tr><td colspan="5" class="msg">${esc(e.message)}</td></tr>`;
+  }
+}
+
+async function viewRun(id) {
+  const r = await api("GET", `/api/runs/${id}`);
+  document.getElementById("detailTitle").textContent = `Run #${r.id}: ${LABELS[r.kind] || r.kind}`;
+  document.getElementById("detailBody").textContent = JSON.stringify({ input: r.input, result: r.result }, null, 2);
+  document.getElementById("detail").style.display = "block";
+}
+
+async function clearAll() {
+  if (!confirm("Delete all saved history?")) return;
+  await api("DELETE", "/api/runs");
+  document.getElementById("detail").style.display = "none";
+  loadRuns();
+}
+
+loadRuns();
+</script>
+</body>
+</html>
