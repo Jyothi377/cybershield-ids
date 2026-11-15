@@ -37,13 +37,27 @@ function addUploadButton(targetId, accept, hint, transform) {
   input.addEventListener("change", async () => {
     const file = input.files[0];
     if (!file) return;
+    // Vercel Functions accept request bodies up to 4.5 MB. Leave headroom for
+    // multipart form data and the later JSON request sent by the scanner.
+    const maxUploadBytes = 4 * 1024 * 1024;
+    if (file.size > maxUploadBytes) {
+      status.textContent = `“${file.name}” is ${(file.size / 1024 / 1024).toFixed(1)} MB. Use a file under 4 MB or split the log into smaller files before scanning.`;
+      input.value = "";
+      return;
+    }
     status.textContent = "Reading " + file.name + " ...";
     try {
       const form = new FormData();
       form.append("file", file);
       const res = await fetch("/api/extract", { method: "POST", body: form });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      const raw = await res.text();
+      let data;
+      try { data = JSON.parse(raw); }
+      catch {
+        if (res.status === 413) throw new Error("The uploaded file is too large for the deployed server. Use a file under 4 MB or split the log into smaller files.");
+        throw new Error(`Upload failed (HTTP ${res.status}). Please try a smaller file.`);
+      }
+      if (!res.ok) throw new Error(data.error || `Upload failed (HTTP ${res.status})`);
       target.value = transform ? transform(data.text) : data.text;
       status.textContent = `Loaded ${data.name} (${data.method}). Check the text, then run it.`;
     } catch (e) {
