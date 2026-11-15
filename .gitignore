@@ -5,3 +5,5 @@ cybershield.db-shm
 cybershield.db-wal
 .env
 .env.*
+
+.vercel
