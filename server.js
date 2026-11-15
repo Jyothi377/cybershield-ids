@@ -1,5 +1,4 @@
 const express = require("express");
-const Database = require("better-sqlite3");
 const { Pool } = require("pg");
 const path = require("path");
 const multer = require("multer");
@@ -10,14 +9,14 @@ const PORT = process.env.PORT || 3000;
 const app = express();
 
 /* ==================== DATABASE ==================== */
-// Production (Vercel): set DATABASE_URL to a Neon PostgreSQL connection string.
-// Development: SQLite remains convenient and requires no account or configuration.
+// Set DATABASE_URL to a Neon PostgreSQL connection string. The in-memory store
+// keeps the app runnable locally without credentials, but is not persistent.
 const usingPostgres = Boolean(process.env.DATABASE_URL);
 const pool = usingPostgres ? new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : undefined
 }) : null;
-const db = usingPostgres ? null : new Database(path.join(__dirname, "cybershield.db"));
+const memory = { signatures: [], runs: [], nextSignatureId: 1, nextRunId: 1 };
 
 function postgresSql(sql) {
   let index = 0;
@@ -25,19 +24,41 @@ function postgresSql(sql) {
 }
 async function all(sql, params = []) {
   if (pool) return (await pool.query(postgresSql(sql), params)).rows;
-  return db.prepare(sql).all(...params);
+  if (sql.startsWith("SELECT * FROM signatures")) return [...memory.signatures].sort((a, b) => a.id - b.id);
+  if (sql.includes("FROM runs WHERE kind")) return memory.runs.filter(row => row.kind === params[0]).slice(-200).reverse().map(runSummary);
+  if (sql.includes("FROM runs")) return memory.runs.slice(-200).reverse().map(runSummary);
+  throw new Error("Unsupported local database query");
 }
 async function get(sql, params = []) {
   if (pool) return (await pool.query(postgresSql(sql), params)).rows[0];
-  return db.prepare(sql).get(...params);
+  if (sql.includes("COUNT(*) AS c FROM signatures")) return { c: memory.signatures.length };
+  if (sql.includes("FROM runs WHERE id")) return memory.runs.find(row => row.id === Number(params[0]));
+  throw new Error("Unsupported local database query");
 }
 async function run(sql, params = []) {
   if (pool) {
     const result = await pool.query(`${postgresSql(sql)} RETURNING id`, params);
     return { lastInsertRowid: result.rows[0]?.id };
   }
-  return db.prepare(sql).run(...params);
+  if (sql.startsWith("INSERT INTO signatures")) {
+    if (memory.signatures.some(row => row.sig === params[0])) throw new Error("This signature already exists");
+    const id = memory.nextSignatureId++;
+    memory.signatures.push({ id, sig: params[0], type: params[1], sev: params[2] });
+    return { lastInsertRowid: id };
+  }
+  if (sql.startsWith("DELETE FROM signatures")) {
+    memory.signatures = memory.signatures.filter(row => row.id !== Number(params[0]));
+    return {};
+  }
+  if (sql.startsWith("INSERT INTO runs")) {
+    const id = memory.nextRunId++;
+    memory.runs.push({ id, kind: params[0], summary: params[1], input: params[2], result: params[3], created_at: new Date().toISOString() });
+    return { lastInsertRowid: id };
+  }
+  if (sql.startsWith("DELETE FROM runs")) { memory.runs = []; return {}; }
+  throw new Error("Unsupported local database query");
 }
+function runSummary({ id, kind, summary, created_at }) { return { id, kind, summary, created_at }; }
 
 async function initializeDatabase() {
   if (pool) {
@@ -46,14 +67,6 @@ async function initializeDatabase() {
     ); CREATE TABLE IF NOT EXISTS runs (
       id SERIAL PRIMARY KEY, kind TEXT NOT NULL, summary TEXT NOT NULL, input TEXT NOT NULL,
       result TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );`);
-  } else {
-    db.pragma("journal_mode = WAL");
-    db.exec(`CREATE TABLE IF NOT EXISTS signatures (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, sig TEXT NOT NULL UNIQUE, type TEXT NOT NULL, sev TEXT NOT NULL
-    ); CREATE TABLE IF NOT EXISTS runs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, summary TEXT NOT NULL, input TEXT NOT NULL,
-      result TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
     );`);
   }
   const count = await get("SELECT COUNT(*) AS c FROM signatures");
